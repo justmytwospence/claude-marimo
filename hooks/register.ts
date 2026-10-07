@@ -89,7 +89,7 @@ export function register(on: On): void {
     }
     if (arg === 'show') {
       if (!watcher.attachment || watcher.connection !== 'connected') return { text: statusFor(watcher) ?? 'marimo: no notebook attached' }
-      return { text: snapshot(watcher.notebook, watcher.attachment, { seenSeq: s.seenSeq, others: watcher.others() }) }
+      return { text: snapshot(watcher.notebook, watcher.attachment, { seenSeq: s.seenSeq, others: watcher.others(), refresh: 'prompt' }) }
     }
     if (arg && arg !== 'status') {
       watcher.setMode({ kind: 'pinned', path: normalize(arg, await $.session.cwd()) })
@@ -148,9 +148,8 @@ export function statusFor(watcher: MarimoWatcher): string | undefined {
 
 /** The state block, tagged with its revision so later requests can tell it is superseded. */
 export function stateText(watcher: MarimoWatcher, seenSeq: number, rev: string): string {
-  return snapshot(watcher.notebook, watcher.attachment!, { seenSeq, others: watcher.others() })
+  return snapshot(watcher.notebook, watcher.attachment!, { seenSeq, others: watcher.others(), refresh: 'prompt' })
     .replace(`<${STATE_TAG} `, `<${STATE_TAG} rev="${rev}" `)
-    .replace('It is replaced with a fresh copy on every request', 'It is replaced with a fresh copy at every prompt')
 }
 
 /** True for a state block of this plugin that is not the latest revision. */

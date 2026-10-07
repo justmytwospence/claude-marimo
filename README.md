@@ -1,0 +1,57 @@
+# claude-marimo
+
+A [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview) that follows the
+[marimo](https://marimo.io) notebook open under your project, so Claude knows what it looks like
+and what it is doing without being asked. The Claude Code port of
+[pi-marimo](https://github.com/justmytwospence/pi-marimo); `hooks/core` is pi-marimo's `src/core`,
+copied unchanged.
+
+- **Status line** under the prompt: `marimo: fit.py · running Data loading › Model fit (12s) · 1 error`.
+  The running part is the markdown section (heading path) the running cell sits under, so you can
+  tell roughly what is running.
+- **Context:** each prompt carries the notebook's current state beside it: its outline (markdown
+  headings), one line per code cell with what it defines, and what needs attention (running,
+  queued, errors, stale, edited but not rerun, changed by you in the browser since Claude's last
+  turn).
+- **`/marimo`:** status and the open notebooks; `/marimo show` prints the block Claude sees;
+  `/marimo auto`, `/marimo off`, or `/marimo <path>` to follow a notebook.
+
+It pairs with the [marimo-pair](https://github.com/marimo-team/marimo-pair) skill, which is how
+Claude inspects and changes the notebook; this mod only reads.
+
+## Only the latest copy
+
+The state is attached at `prompt.submit` as context, and each block is tagged with a revision. A
+`prompt.attachment` hook answers `null` for every block but the latest, and the mod invalidates
+attachments after each prompt, so the conversation holds one copy of the state rather than one per
+prompt. After a resume or reload only the next prompt's block is kept.
+
+This differs from the pi and opencode ports, which add the block to each model request without ever
+storing it. A mod cannot change the messages of a request (`turn.step` pins them), so here the
+state is refreshed once per prompt, not before every tool follow-up, and dropping the previous
+copy means the conversation after it is read uncached once per prompt (usually the last turn).
+
+## How it works
+
+The core subscribes to the notebook session's `/sse` stream as a marimo *kiosk* consumer: a
+read-only viewer that cannot run or edit code and never takes the notebook over from your browser.
+A mod runs without Node APIs, so the core reaches the host through `$`: the server registry with
+`$.fs`, `/api/sessions` with `$.http.fetch`, and the stream through `curl` under `$.process.spawn`
+(`$.http.fetch` buffers whole bodies). See pi-marimo's README for the rest.
+
+The notebook is the one open under the session's working directory. With several open there, the
+status line says so; pick one with `/marimo <path>` or `MARIMO_NOTEBOOK=/path/to/notebook.py`
+(`off` disables the mod). Token-protected servers are reached with `MARIMO_TOKEN`.
+
+## Install
+
+A plugin directory with a hooks module, loaded with `claude --plugin-dir <checkout>` or listed in
+`CLAUDE_CODE_PLUGIN_DIRS`. Needs `curl` and `realpath` on `PATH`. Tested with Claude Code 2.1.289.
+
+## Development
+
+```sh
+claude plugin validate .   # static analysis of the hooks module
+claude plugin test         # tests/, no session or network
+tsc -p .                   # after one load, which writes .claude-plugin/types/
+```

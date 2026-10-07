@@ -1,0 +1,8 @@
+{
+  "name": "marimo",
+  "version": "0.1.0",
+  "description": "Follows the live marimo notebook open under the project: what is running on the status line, the notebook's current state beside each prompt.",
+  "author": { "name": "Spencer Boucher" },
+  "repository": "https://github.com/justmytwospence/claude-marimo",
+  "license": "MIT"
+}

@@ -27,9 +27,11 @@ export interface StatusParts {
   running?: { section: string; cell: string; elapsed?: string };
   queued: number;
   errors: number;
+  /** Other notebooks followed besides this one. */
+  others?: number;
 }
 
-export function statusParts(nb: NotebookState, attachment: Attachment, connection: string, now = Date.now()): StatusParts {
+export function statusParts(nb: NotebookState, attachment: Attachment, connection: string, now = Date.now(), others = 0): StatusParts {
   const run = connection === "connected" ? nb.running() : undefined;
   return {
     notebook: basename(attachment.path),
@@ -43,11 +45,12 @@ export function statusParts(nb: NotebookState, attachment: Attachment, connectio
       : undefined,
     queued: connection === "connected" ? nb.queued() : 0,
     errors: connection === "connected" ? nb.errors().length : 0,
+    others,
   };
 }
 
 /**
- * One line, e.g. `marimo: fit.py · running Data loading › Model fit (12s) · 2 queued · 1 error`.
+ * One line, e.g. `marimo: fit.py · running Data loading › Model fit (12s) · 2 queued · 1 error · +2 open`.
  * The shape is stable so footers can parse it: `marimo: <file>` then ` · ` separated parts.
  */
 export function statusText(parts: StatusParts): string {
@@ -59,6 +62,7 @@ export function statusText(parts: StatusParts): string {
   }
   if (parts.queued) out.push(`${parts.queued} queued`);
   if (parts.errors) out.push(`${parts.errors} error${parts.errors === 1 ? "" : "s"}`);
+  if (parts.others) out.push(`+${parts.others} open`);
   return out.join(" · ");
 }
 
@@ -68,6 +72,8 @@ function firstLine(code: string): string {
 }
 
 export interface SnapshotOptions {
+  /** Other notebooks open in the project, named so the agent knows they exist. */
+  others?: Attachment[];
   /** Edits from the browser after this change number are flagged as new. */
   seenSeq?: number;
   /** Above this many cells, quiet code cells are folded into counts. */
@@ -85,6 +91,9 @@ export function snapshot(nb: NotebookState, attachment: Attachment, options: Sna
   const seen = options.seenSeq ?? Number.POSITIVE_INFINITY;
   const cells = nb.ordered();
   const fold = cells.length > maxCells;
+  // When most cells are stale (a lazy notebook after a restart), say so once instead of on every line.
+  const staleCount = cells.filter((c) => c.stale).length;
+  const staleCommon = staleCount > cells.length / 2;
 
   const notes = (cell: Cell): string[] => {
     const out: string[] = [];
@@ -94,7 +103,7 @@ export function snapshot(nb: NotebookState, attachment: Attachment, options: Sna
     if (cell.blocked) out.push("not run: an ancestor failed");
     if (cell.disabled) out.push("disabled");
     else if (cell.status === "disabled-transitively") out.push("disabled by an ancestor");
-    if (cell.stale) out.push("stale");
+    if (cell.stale && !staleCommon) out.push("stale");
     if (nb.edited(cell)) out.push("edited, not rerun");
     if (cell.editedBy === "frontend" && cell.editSeq > seen) out.push("changed by the user in the browser");
     return out;
@@ -123,9 +132,11 @@ export function snapshot(nb: NotebookState, attachment: Attachment, options: Sna
       else lines.push(`  ${cell.id} (markdown)`);
       continue;
     }
+    // Folded or not, the outline keeps every heading.
+    if (headings.length) flushFolded();
+    for (const h of headings) lines.push(`${"#".repeat(h.level)} ${h.text}  [${cell.id}]`);
     if (fold && !cellNotes.length) { folded++; continue; }
     flushFolded();
-    for (const h of headings) lines.push(`${"#".repeat(h.level)} ${h.text}  [${cell.id}]`);
     const defs = nb.defs.get(cell.id) ?? [];
     const label = cell.name !== "_" ? `${cell.id} "${cell.name}"` : cell.id;
     const what = defs.length ? `defines ${truncate(defs.join(", "), 80)}` : firstLine(cell.code) || "(empty)";
@@ -140,6 +151,7 @@ export function snapshot(nb: NotebookState, attachment: Attachment, options: Sna
   if (queued) summary.push(`${queued} queued`);
   const errors = nb.errors().length;
   if (errors) summary.push(`${errors} cell${errors === 1 ? "" : "s"} with errors`);
+  if (staleCommon) summary.push(`${staleCount} of ${cells.length} cells stale (inputs changed, not rerun)`);
 
   return [
     `<${STATE_TAG} path="${attachment.path}" url="${attachment.url}" session="${attachment.sessionId}">`,
@@ -148,6 +160,9 @@ export function snapshot(nb: NotebookState, attachment: Attachment, options: Sna
     "Cells are listed in notebook order under their markdown headings, by cell id. Inspect or change cells",
     "through the marimo-pair skill, not by editing the .py file.",
     `Kernel: ${summary.length ? summary.join(", ") : "idle"}.`,
+    ...(options.others?.length
+      ? [`Also open (the one used most recently is shown): ${options.others.map((o) => o.path).join(", ")}.`]
+      : []),
     "",
     ...lines,
     `</${STATE_TAG}>`,

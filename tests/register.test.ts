@@ -28,7 +28,7 @@ test('staleness compares revisions', () => {
 test('the block carries its revision', () => {
   const notebook = new NotebookState()
   notebook.apply('kernel-ready', { cell_ids: ['a'], codes: ['x = 1'], names: ['_'], configs: [] })
-  const watcher = { notebook, attachment: { url: 'http://127.0.0.1:2718', sessionId: 's1', path: '/w/nb.py' } } as any
+  const watcher = { notebook, attachment: { url: 'http://127.0.0.1:2718', sessionId: 's1', path: '/w/nb.py' }, others: () => [] } as any
   const text = stateText(watcher, 0, 'n-7')
   expect(text.startsWith('<marimo_notebook_state rev="n-7" path="/w/nb.py"')).toBe(true)
   expect(text).toContain('replaced with a fresh copy at every prompt')

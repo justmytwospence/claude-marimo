@@ -39,8 +39,10 @@ A mod runs without Node APIs, so the core reaches the host through `$`: the serv
 `$.fs`, `/api/sessions` with `$.http.fetch`, and the stream through `curl` under `$.process.spawn`
 (`$.http.fetch` buffers whole bodies). See pi-marimo's README for the rest.
 
-The notebook is the one open under the session's working directory. With several open there, the
-status line says so; pick one with `/marimo <path>` or `MARIMO_NOTEBOOK=/path/to/notebook.py`
+It follows every notebook open under the session's working directory (up to eight, leaving out
+hidden directories such as `.claude/worktrees/`). The current one, on the status line (`+2 open`
+counts the others) and in context, is the one used most recently: a running cell first, then the
+latest cell run or edit. Pin one with `/marimo <path>` or `MARIMO_NOTEBOOK=/path/to/notebook.py`
 (`off` disables the mod). Token-protected servers are reached with `MARIMO_TOKEN`.
 
 ## Install

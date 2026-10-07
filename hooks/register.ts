@@ -85,11 +85,11 @@ export function register(on: On): void {
     const arg = e.args.trim()
     if (arg === 'auto' || arg === 'off') {
       watcher.setMode(modeFor(arg === 'off' ? 'off' : undefined))
-      return { text: arg === 'off' ? 'marimo: off' : 'marimo: following the notebook open under this directory' }
+      return { text: arg === 'off' ? 'marimo: off' : 'marimo: following the notebook used most recently under this directory' }
     }
     if (arg === 'show') {
       if (!watcher.attachment || watcher.connection !== 'connected') return { text: statusFor(watcher) ?? 'marimo: no notebook attached' }
-      return { text: snapshot(watcher.notebook, watcher.attachment, { seenSeq: s.seenSeq }) }
+      return { text: snapshot(watcher.notebook, watcher.attachment, { seenSeq: s.seenSeq, others: watcher.others() }) }
     }
     if (arg && arg !== 'status') {
       watcher.setMode({ kind: 'pinned', path: normalize(arg, await $.session.cwd()) })
@@ -138,18 +138,17 @@ export function modeFor(pinned: string | undefined): Mode {
 }
 
 export function statusFor(watcher: MarimoWatcher): string | undefined {
-  const { connection, attachment, candidates, mode } = watcher
-  if (connection === 'ambiguous') return `marimo: ${candidates.length} notebooks open here · /marimo <path> to pick one`
+  const { connection, attachment, mode } = watcher
   if (!attachment) return undefined
   if (connection === 'searching') {
     return mode.kind === 'pinned' ? statusText({ notebook: attachment.path.split('/').pop() ?? attachment.path, connection: 'not open', queued: 0, errors: 0 }) : undefined
   }
-  return statusText(statusParts(watcher.notebook, attachment, connection))
+  return statusText(statusParts(watcher.notebook, attachment, connection, Date.now(), watcher.others().length))
 }
 
 /** The state block, tagged with its revision so later requests can tell it is superseded. */
 export function stateText(watcher: MarimoWatcher, seenSeq: number, rev: string): string {
-  return snapshot(watcher.notebook, watcher.attachment!, { seenSeq })
+  return snapshot(watcher.notebook, watcher.attachment!, { seenSeq, others: watcher.others() })
     .replace(`<${STATE_TAG} `, `<${STATE_TAG} rev="${rev}" `)
     .replace('It is replaced with a fresh copy on every request', 'It is replaced with a fresh copy at every prompt')
 }

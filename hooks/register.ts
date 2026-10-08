@@ -13,6 +13,7 @@ import type { EngineInterface, On } from 'claude-code'
 
 import { type Cancellable, type Io, normalize, type StreamEnd } from './core/io.js'
 import { type SnapshotEntry, snapshot, STATE_TAG, statusParts, statusText } from './core/render.js'
+import { pairTargets } from './core/touch.js'
 import { MarimoWatcher, type Mode } from './core/watcher.js'
 
 const COMMAND = 'marimo'
@@ -73,6 +74,14 @@ export function register(on: On): void {
 
   on('prompt.attachment', ($, e, next) => {
     if (e.origin.kind === 'plugin' && isStaleState(e.text, `${s.nonce}-${s.revision}`)) return { text: null }
+    return next(e)
+  })
+
+  // The notebook this session's agent works in (through marimo-pair) becomes current for it,
+  // whatever other sessions or the browser do; subagents' calls count as this session's.
+  on('tool.call', ($, e, next) => {
+    const targets = pairTargets(JSON.stringify(e))
+    if (targets.length) s.watcher?.touch(targets)
     return next(e)
   })
 

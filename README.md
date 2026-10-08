@@ -42,8 +42,11 @@ A mod runs without Node APIs, so the core reaches the host through `$`: the serv
 (`$.http.fetch` buffers whole bodies). See pi-marimo's README for the rest.
 
 It follows every notebook open under the session's working directory (up to eight, leaving out
-hidden directories such as `.claude/worktrees/`). The current one is the one used most recently: a
-running cell first, then the latest cell run or edit. Pin a set with `/marimo <path> <path>` or
+hidden directories such as `.claude/worktrees/`). The current one is the one Claude last worked in,
+read from its marimo-pair calls (`tool.call`: `--file`, `--session`, or `--url` when only one
+followed notebook is on that server), so two Claude sessions in two notebooks each keep their own.
+Before Claude has touched any, it is the one used most recently by anyone: a running cell first,
+then the latest cell run or edit. Pin a set with `/marimo <path> <path>` or
 `MARIMO_NOTEBOOK=/path/a.py,/path/b.py` (`off` disables the mod). Token-protected servers are reached with `MARIMO_TOKEN`.
 
 ## Install

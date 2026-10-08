@@ -18,6 +18,12 @@ copied unchanged.
 - **`/marimo`:** status and the open notebooks; `/marimo show` prints the block Claude sees;
   `/marimo auto`, `/marimo off`, or `/marimo <path> [<path>...]` to pin a set of notebooks.
 
+- **herdr:** when a turn ends while a cell Claude started is still running, the pane token `marimo`
+  says what runs (`fit.py: Model fit`) until the kernel goes quiet, then a herdr notification says it
+  finished, with the done sound unless the pane is focused. Add `$marimo` to a row in
+  `[ui.sidebar.agents]` to show the token. The pane's state stays `idle`: herdr reads Claude Code's
+  state from the screen and takes none from other reporters. See pi-marimo's README.
+
 It pairs with the [marimo-pair](https://github.com/marimo-team/marimo-pair) skill, which is how
 Claude inspects and changes the notebook; this mod only reads.
 

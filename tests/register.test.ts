@@ -1,7 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
 import { NotebookState } from '../hooks/core/notebook'
-import { isStaleState, modeFor, stateText } from '../hooks/register'
+import { KernelHold } from '../hooks/core/hold'
+import { herdrCalls, isStaleState, modeFor, stateText } from '../hooks/register'
 
 const STATE = (rev: string) => `<marimo_notebook_state rev="${rev}" path="/n.py" url="u" session="s">\n…\n</marimo_notebook_state>`
 
@@ -39,4 +40,25 @@ test('MARIMO_NOTEBOOK pins or turns off', () => {
   expect(modeFor('/a/b.py')).toEqual({ kind: 'pinned', paths: ['/a/b.py'] })
   expect(modeFor('/a/b.py,/c.py')).toEqual({ kind: 'pinned', paths: ['/a/b.py', '/c.py'] })
   expect(modeFor('off')).toEqual({ kind: 'off' })
+})
+
+test('the herdr token while a cell Claude started outlives its turn', () => {
+  const notebook = new NotebookState()
+  notebook.apply('kernel-ready', { cell_ids: ['a'], codes: ['x = 1'], names: ['_'], configs: [] })
+  notebook.apply('cell-op', { cell_id: 'a', status: 'running', timestamp: 1 })
+  const followed = [{ attachment: { url: 'u', sessionId: 's', path: '/w/fit.py' }, notebook, connection: 'connected' as const, current: true, touchedAt: 1500 }]
+  const hold = new KernelHold()
+  hold.begin(1000)
+  const held = hold.end(followed, 2000)
+  expect(held).toEqual({ kind: 'held', value: 'fit.py: cell a' })
+  expect(herdrCalls(held, 'w1:p1', false)).toEqual([
+    ['herdr', 'pane', 'report-metadata', 'w1:p1', '--source', 'marimo', '--agent', 'claude', '--token', 'marimo=fit.py: cell a', '--ttl-ms', '86400000'],
+  ])
+  notebook.apply('cell-op', { cell_id: 'a', status: 'idle', timestamp: 5 })
+  const finished = hold.update(followed, 62_000)
+  expect(finished).toEqual({ kind: 'finished', title: 'fit.py finished', body: 'ran 1m00s' })
+  expect(herdrCalls(finished, 'w1:p1', true)).toEqual([
+    ['herdr', 'pane', 'report-metadata', 'w1:p1', '--source', 'marimo', '--agent', 'claude', '--clear-token', 'marimo'],
+  ])
+  expect(herdrCalls({ kind: 'released' }, 'w1:p1', false)).toEqual([])
 })

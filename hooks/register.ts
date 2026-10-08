@@ -5,12 +5,15 @@
 //   Older copies are left out of every later request (prompt.attachment answers null for them),
 //   so the conversation holds one copy, the latest, instead of one per prompt.
 // - /marimo: status, show, auto, off, or a notebook path to follow.
+// - herdr: when a turn ends with a cell Claude started still running, the pane token `marimo`
+//   says what runs until the kernel goes quiet, then a notification says it finished.
 //
 // The port of pi-marimo; core/ is shared with it unchanged. The host reads on(...) and
 // $.noun.method(...) from source, so every $ call is spelled in full in this file and the
 // core reaches the host only through the Io built in claudeIo.
 import type { EngineInterface, On } from 'claude-code'
 
+import { HERDR_SOURCE, HERDR_TOKEN, type HoldChange, KernelHold } from './core/hold.js'
 import { type Cancellable, type Io, normalize, type StreamEnd } from './core/io.js'
 import { type SnapshotEntry, snapshot, STATE_TAG, statusParts, statusText } from './core/render.js'
 import { pairTargets } from './core/touch.js'
@@ -29,10 +32,16 @@ interface State {
   revision: number
   ticker?: { cancel: () => void }
   lastStatus?: string
+  /** A cell Claude started that outlives its turn, shown in herdr. */
+  hold: KernelHold
+  /** herdr reports, in order. */
+  herdr: Promise<unknown>
+  /** Whether the `marimo` token is set. */
+  holding: boolean
 }
 
 export function register(on: On): void {
-  const s: State = { seen: new Map(), nonce: Math.random().toString(36).slice(2, 8), revision: 0 }
+  const s: State = { seen: new Map(), nonce: Math.random().toString(36).slice(2, 8), revision: 0, hold: new KernelHold(), herdr: Promise.resolve(), holding: false }
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -50,6 +59,7 @@ export function register(on: On): void {
   })
 
   on('session.end', async ($, e, next) => {
+    await herdr($, s, s.hold.release())
     s.ticker?.cancel()
     s.ticker = undefined
     await s.watcher?.stop()
@@ -85,8 +95,16 @@ export function register(on: On): void {
     return next(e)
   })
 
+  on('turn.start', ($, e, next) => {
+    void herdr($, s, s.hold.begin(Date.now()))
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
-    for (const f of s.watcher?.followed() ?? []) s.seen.set(f.attachment.path, f.notebook.seq)
+    if (e.agentId !== undefined) return next(e)
+    const followed = s.watcher?.followed() ?? []
+    for (const f of followed) s.seen.set(f.attachment.path, f.notebook.seq)
+    void herdr($, s, s.hold.end(followed, Date.now()))
     return next(e)
   })
 
@@ -130,6 +148,7 @@ function startWatcher($: EngineInterface, s: State, cwd: string, token: string |
 function showStatus($: EngineInterface, s: State): void {
   const watcher = s.watcher
   if (!watcher) return
+  if (s.hold.active) void herdr($, s, s.hold.update(watcher.followed(), Date.now()))
   const text = statusFor(watcher)
   if (text !== s.lastStatus) {
     s.lastStatus = text
@@ -142,6 +161,37 @@ function showStatus($: EngineInterface, s: State): void {
     s.ticker.cancel()
     s.ticker = undefined
   }
+}
+
+/**
+ * The herdr CLI calls for a hold change. herdr's Claude integration only reports the session and
+ * herdr reads Claude Code's state from the screen; it takes no state from any other reporter once
+ * that session is known, so the pane stays `idle`. While held, the pane token `marimo` says what
+ * runs; when the run ends it is cleared, and a notification follows unless the pane is focused.
+ */
+export function herdrCalls(change: HoldChange, pane: string, reported: boolean): string[][] {
+  const metadata = ['herdr', 'pane', 'report-metadata', pane, '--source', HERDR_SOURCE, '--agent', 'claude']
+  if (change.kind === 'none') return []
+  if (change.kind === 'held') return [[...metadata, '--token', `${HERDR_TOKEN}=${change.value}`, '--ttl-ms', '86400000']]
+  return reported ? [[...metadata, '--clear-token', HERDR_TOKEN]] : []
+}
+
+/** Report a hold change to herdr, inside a herdr pane only; any failure is ignored. */
+function herdr($: EngineInterface, s: State, change: HoldChange): Promise<unknown> {
+  if (change.kind === 'none') return s.herdr
+  s.herdr = s.herdr.then(async () => {
+    if ((await $.env.get('HERDR_ENV')) !== '1') return
+    const pane = await $.env.get('HERDR_PANE_ID')
+    if (!pane) return
+    const calls = herdrCalls(change, pane, s.holding)
+    s.holding = change.kind === 'held'
+    for (const argv of calls) await $.process.run(argv, { timeoutMs: 3_000 }).catch(() => undefined)
+    if (change.kind !== 'finished') return
+    const got = await $.process.run(['herdr', 'pane', 'get', pane], { timeoutMs: 3_000 }).catch(() => undefined)
+    if (got && got.exitCode === 0 && /"focused":true/.test(got.stdout)) return
+    await $.process.run(['herdr', 'notification', 'show', change.title, '--body', change.body, '--sound', 'done'], { timeoutMs: 3_000 }).catch(() => undefined)
+  }).catch(() => undefined)
+  return s.herdr
 }
 
 /**

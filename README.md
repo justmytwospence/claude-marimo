@@ -1,20 +1,22 @@
 # claude-marimo
 
 A [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview) that follows the
-[marimo](https://marimo.io) notebook open under your project, so Claude knows what it looks like
-and what it is doing without being asked. The Claude Code port of
+[marimo](https://marimo.io) notebooks open under your project, so Claude knows what they look like
+and what they are doing without being asked. The Claude Code port of
 [pi-marimo](https://github.com/justmytwospence/pi-marimo); `hooks/core` is pi-marimo's `src/core`,
 copied unchanged.
 
-- **Status line** under the prompt: `marimo: fit.py · running Data loading › Model fit (12s) · 1 error`.
-  The running part is the markdown section (heading path) the running cell sits under, so you can
-  tell roughly what is running.
-- **Context:** each prompt carries the notebook's current state beside it: its outline (markdown
-  headings), one line per code cell with what it defines, and what needs attention (running,
-  queued, errors, stale, edited but not rerun, changed by you in the browser since Claude's last
-  turn).
+- **Status line** under the prompt: `marimo: fit.py · running Data loading › Model fit (12s) · 1 error
+  · also prep.py, plots.py`. The first notebook is the current one (used most recently), with what
+  its kernel is doing: the running part is the markdown section (heading path) the running cell
+  sits under, so you can tell roughly what is running. `also` names the other notebooks followed.
+- **Context:** each prompt carries the state of every followed notebook beside it. The current one
+  comes first and in full: its outline (markdown headings), one line per code cell with what it
+  defines, and what needs attention (running, queued, errors, stale, edited but not rerun, changed
+  by you in the browser since Claude's last turn). The others follow as short outlines with only the
+  cells that need attention.
 - **`/marimo`:** status and the open notebooks; `/marimo show` prints the block Claude sees;
-  `/marimo auto`, `/marimo off`, or `/marimo <path>` to follow a notebook.
+  `/marimo auto`, `/marimo off`, or `/marimo <path> [<path>...]` to pin a set of notebooks.
 
 It pairs with the [marimo-pair](https://github.com/marimo-team/marimo-pair) skill, which is how
 Claude inspects and changes the notebook; this mod only reads.
@@ -40,10 +42,9 @@ A mod runs without Node APIs, so the core reaches the host through `$`: the serv
 (`$.http.fetch` buffers whole bodies). See pi-marimo's README for the rest.
 
 It follows every notebook open under the session's working directory (up to eight, leaving out
-hidden directories such as `.claude/worktrees/`). The current one, on the status line (`+2 open`
-counts the others) and in context, is the one used most recently: a running cell first, then the
-latest cell run or edit. Pin one with `/marimo <path>` or `MARIMO_NOTEBOOK=/path/to/notebook.py`
-(`off` disables the mod). Token-protected servers are reached with `MARIMO_TOKEN`.
+hidden directories such as `.claude/worktrees/`). The current one is the one used most recently: a
+running cell first, then the latest cell run or edit. Pin a set with `/marimo <path> <path>` or
+`MARIMO_NOTEBOOK=/path/a.py,/path/b.py` (`off` disables the mod). Token-protected servers are reached with `MARIMO_TOKEN`.
 
 ## Install
 

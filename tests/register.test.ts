@@ -28,14 +28,15 @@ test('staleness compares revisions', () => {
 test('the block carries its revision', () => {
   const notebook = new NotebookState()
   notebook.apply('kernel-ready', { cell_ids: ['a'], codes: ['x = 1'], names: ['_'], configs: [] })
-  const watcher = { notebook, attachment: { url: 'http://127.0.0.1:2718', sessionId: 's1', path: '/w/nb.py' }, others: () => [] } as any
-  const text = stateText(watcher, 0, 'n-7')
-  expect(text.startsWith('<marimo_notebook_state rev="n-7" path="/w/nb.py"')).toBe(true)
+  const text = stateText([{ notebook, attachment: { url: 'http://127.0.0.1:2718', sessionId: 's1', path: '/w/nb.py' } }], 'n-7')
+  expect(text.startsWith('<marimo_notebook_state rev="n-7" notebooks="1">')).toBe(true)
+  expect(text).toContain('=== /w/nb.py (current; http://127.0.0.1:2718, session s1) ===')
   expect(text).toContain('not updated during the turn')
 })
 
 test('MARIMO_NOTEBOOK pins or turns off', () => {
   expect(modeFor(undefined)).toEqual({ kind: 'auto' })
-  expect(modeFor('/a/b.py')).toEqual({ kind: 'pinned', path: '/a/b.py' })
+  expect(modeFor('/a/b.py')).toEqual({ kind: 'pinned', paths: ['/a/b.py'] })
+  expect(modeFor('/a/b.py,/c.py')).toEqual({ kind: 'pinned', paths: ['/a/b.py', '/c.py'] })
   expect(modeFor('off')).toEqual({ kind: 'off' })
 })

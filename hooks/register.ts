@@ -12,7 +12,7 @@
 import type { EngineInterface, On } from 'claude-code'
 
 import { type Cancellable, type Io, normalize, type StreamEnd } from './core/io.js'
-import { snapshot, STATE_TAG, statusParts, statusText } from './core/render.js'
+import { type SnapshotEntry, snapshot, STATE_TAG, statusParts, statusText } from './core/render.js'
 import { MarimoWatcher, type Mode } from './core/watcher.js'
 
 const COMMAND = 'marimo'
@@ -21,7 +21,8 @@ const COMMAND = 'marimo'
 interface State {
   watcher?: MarimoWatcher
   /** Browser edits after this change number are flagged as new in the next prompt's state. */
-  seenSeq: number
+  /** Per notebook path: browser edits after this change number are flagged as new in the next state. */
+  seen: Map<string, number>
   /** Revisions of the state this process attached are `<nonce>-<n>`; only the latest is kept. */
   nonce: string
   revision: number
@@ -30,7 +31,7 @@ interface State {
 }
 
 export function register(on: On): void {
-  const s: State = { seenSeq: 0, nonce: Math.random().toString(36).slice(2, 8), revision: 0 }
+  const s: State = { seen: new Map(), nonce: Math.random().toString(36).slice(2, 8), revision: 0 }
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -60,9 +61,10 @@ export function register(on: On): void {
     if (!watcher) return next(e)
     watcher.refresh()
     await watcher.settle(2000)
-    if (!watcher.attachment || watcher.connection !== 'connected' || !watcher.notebook.ready) return next(e)
+    const entries = stateEntries(watcher, s)
+    if (!entries.length) return next(e)
     s.revision++
-    const text = stateText(watcher, s.seenSeq, `${s.nonce}-${s.revision}`)
+    const text = stateText(entries, `${s.nonce}-${s.revision}`)
     const result = await next({ ...e, context: [...(e.context ?? []), text] })
     // Ask every attachment again, so the copies this one supersedes are left out.
     $.ui.invalidate('prompt.attachment')
@@ -75,7 +77,7 @@ export function register(on: On): void {
   })
 
   on('turn.complete', async ($, e, next) => {
-    if (s.watcher) s.seenSeq = s.watcher.notebook.seq
+    for (const f of s.watcher?.followed() ?? []) s.seen.set(f.attachment.path, f.notebook.seq)
     return next(e)
   })
 
@@ -85,21 +87,23 @@ export function register(on: On): void {
     const arg = e.args.trim()
     if (arg === 'auto' || arg === 'off') {
       watcher.setMode(modeFor(arg === 'off' ? 'off' : undefined))
-      return { text: arg === 'off' ? 'marimo: off' : 'marimo: following the notebook used most recently under this directory' }
+      return { text: arg === 'off' ? 'marimo: off' : 'marimo: following every notebook open under this directory' }
     }
     if (arg === 'show') {
-      if (!watcher.attachment || watcher.connection !== 'connected') return { text: statusFor(watcher) ?? 'marimo: no notebook attached' }
-      return { text: snapshot(watcher.notebook, watcher.attachment, { seenSeq: s.seenSeq, others: watcher.others(), refresh: 'prompt' }) }
+      const entries = stateEntries(watcher, s)
+      return { text: entries.length ? snapshot(entries, { refresh: 'prompt' }) : statusFor(watcher) ?? 'marimo: no notebook attached' }
     }
     if (arg && arg !== 'status') {
-      watcher.setMode({ kind: 'pinned', path: normalize(arg, await $.session.cwd()) })
-      return { text: `marimo: following ${arg}` }
+      const cwd = await $.session.cwd()
+      const paths = arg.split(/[\s,]+/).filter(Boolean).map((p) => normalize(p, cwd))
+      watcher.setMode({ kind: 'pinned', paths })
+      return { text: `marimo: following ${paths.join(', ')}` }
     }
     const open = await watcher.list()
     return {
       text: [
         statusFor(watcher) ?? 'marimo: no notebook attached',
-        `Mode: ${watcher.mode.kind}${watcher.mode.kind === 'pinned' ? ` (${watcher.mode.path})` : ''}.`,
+        `Mode: ${watcher.mode.kind}${watcher.mode.kind === 'pinned' ? ` (${watcher.mode.paths.join(', ')})` : ''}.`,
         open.length ? `Open notebooks:\n${open.map((n) => `  ${n.path}  (${n.url}, session ${n.sessionId})`).join('\n')}` : 'No marimo notebooks are open.',
       ].join('\n'),
     }
@@ -131,25 +135,35 @@ function showStatus($: EngineInterface, s: State): void {
   }
 }
 
-/** MARIMO_NOTEBOOK=<path> follows that notebook, =off turns the plugin off; unset follows the one open under the project. */
+/**
+ * MARIMO_NOTEBOOK=<path>[,<path>...] follows those notebooks, =off turns the mod off; unset follows
+ * every notebook open under the project.
+ */
 export function modeFor(pinned: string | undefined): Mode {
   if (pinned === 'off') return { kind: 'off' }
-  return pinned ? { kind: 'pinned', path: pinned } : { kind: 'auto' }
+  const paths = (pinned ?? '').split(',').map((p) => p.trim()).filter(Boolean)
+  return paths.length ? { kind: 'pinned', paths } : { kind: 'auto' }
+}
+
+/** The followed notebooks that are connected, the current one first. */
+export function stateEntries(watcher: MarimoWatcher, s: { seen: Map<string, number> }) {
+  return watcher.followed()
+    .filter((f) => f.connection === 'connected' && f.notebook.ready)
+    .map((f) => ({ notebook: f.notebook, attachment: f.attachment, current: f.current, seenSeq: s.seen.get(f.attachment.path) ?? 0 }))
 }
 
 export function statusFor(watcher: MarimoWatcher): string | undefined {
   const { connection, attachment, mode } = watcher
   if (!attachment) return undefined
   if (connection === 'searching') {
-    return mode.kind === 'pinned' ? statusText({ notebook: attachment.path.split('/').pop() ?? attachment.path, connection: 'not open', queued: 0, errors: 0 }) : undefined
+    return mode.kind === 'pinned' ? statusText({ notebook: mode.paths.map((p) => p.split('/').pop()).join(', '), connection: 'not open', queued: 0, errors: 0 }) : undefined
   }
-  return statusText(statusParts(watcher.notebook, attachment, connection, Date.now(), watcher.others().length))
+  return statusText(statusParts(watcher.notebook, attachment, connection, Date.now(), watcher.others()))
 }
 
 /** The state block, tagged with its revision so later requests can tell it is superseded. */
-export function stateText(watcher: MarimoWatcher, seenSeq: number, rev: string): string {
-  return snapshot(watcher.notebook, watcher.attachment!, { seenSeq, others: watcher.others(), refresh: 'prompt' })
-    .replace(`<${STATE_TAG} `, `<${STATE_TAG} rev="${rev}" `)
+export function stateText(entries: SnapshotEntry[], rev: string): string {
+  return snapshot(entries, { refresh: 'prompt' }).replace(`<${STATE_TAG} `, `<${STATE_TAG} rev="${rev}" `)
 }
 
 /** True for a state block of this plugin that is not the latest revision. */
